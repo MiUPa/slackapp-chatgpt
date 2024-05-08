@@ -52,31 +52,31 @@ def handle_mention(event, say):
     thread_ts = event["ts"]
     message = re.sub("<@.*>", "", event["text"])
 
-    result = say("/n/nTyping...", thread_ts=thread_ts)
+    result = say("\n\nTyping...", thread_ts=thread_ts)
     ts = result["ts"]
 
     callback = SlackStreamingCallbackHandler(channel=channel, ts=ts)
     llm = ChatOpenAI(
-        model_name=os.environ["OPEN_API_MODEL"],
-        temperature=os.environ["OPEN_API_TEMPERATURE"],
+        model_name=os.environ["OPENAI_API_MODEL"],
+        temperature=os.environ["OPENAI_API_TEMPERATURE"],
         streaming=True,
         callbacks=[callback],
     )
 
     llm.predict(message)
 
-@app.event("app_mention")
-def handle_mention(event, say):
-    thread_ts = event["ts"]
-    message = re.sub("<@.*>", "", event["text"])
-
-    llm = ChatOpenAI(
-        model_name=os.environ["OPENAI_API_MODEL"],
-        temperature=os.environ["OPENAI_API_TEMPERATURE"],
-    )
-
-    response = llm.predict(message)
-    say(thread_ts=thread_ts, text=response)
+# @app.event("app_mention")
+# def handle_mention(event, say):
+#     thread_ts = event["ts"]
+#     message = re.sub("<@.*>", "", event["text"])
+#
+#     llm = ChatOpenAI(
+#         model_name=os.environ["OPENAI_API_MODEL"],
+#         temperature=os.environ["OPENAI_API_TEMPERATURE"],
+#     )
+#
+#     response = llm.predict(message)
+#     say(thread_ts=thread_ts, text=response)
 
 
 if __name__ == "__main__":
