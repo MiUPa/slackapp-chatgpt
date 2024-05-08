@@ -12,7 +12,7 @@ app = App(token=os.environ.get("SLACK_BOT_TOKEN"))
 def handle_mention(event, say):
     user = event["user"]
     thread_ts = event["ts"]
-    say(thread_ts=thread_ts, text=f"Hello <@{user}!")
+    say(thread_ts=thread_ts, text=f"Hello <@{user}>!")
 
 
 if __name__ == "__main__":
