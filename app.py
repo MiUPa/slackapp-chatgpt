@@ -1,5 +1,3 @@
-
-
 import os
 from dotenv import load_dotenv
 from slack_bolt import App
@@ -15,7 +13,10 @@ from typing import Any
 CHAT_UPDATE_INTERVAL_SEC = 1
 
 from langchain.callbacks.base import BaseCallbackHandler
-from langchain.schema import LLMResult
+from langchain.schema import HumanMessage, LLMResult, SystemMessage
+
+from datetime import timedelta
+from langchain.memory import MomentoChatMessageHistory
 
 load_dotenv()
 
@@ -24,6 +25,7 @@ app = App(
     token=os.environ["SLACK_BOT_TOKEN"],
     process_before_response=True,
 )
+
 
 class SlackStreamingCallbackHandler(BaseCallbackHandler):
     last_send_time = time.time()
@@ -46,14 +48,31 @@ class SlackStreamingCallbackHandler(BaseCallbackHandler):
     def on_llm_end(self, response: LLMResult, **kwargs: Any) -> Any:
         app.client.chat_update(channel=self.channel, ts=self.ts, text=self.message)
 
-@app.event("app_mention")
+
+# @app.event("app_mention")
 def handle_mention(event, say):
     channel = event["channel"]
     thread_ts = event["ts"]
     message = re.sub("<@.*>", "", event["text"])
 
+    id_ts = event["ts"]
+    if "thread_ts" in event:
+        id_ts = event["thread_ts"]
+
     result = say("\n\nTyping...", thread_ts=thread_ts)
     ts = result["ts"]
+
+    history = MomentoChatMessageHistory.from_client_params(
+        id_ts,
+        os.environ["MOMENTO_CACHE"],
+        timedelta(hours=int(os.environ["MOMENTO_TTL"])),
+    )
+
+    messages = [SystemMessage(content="You are a good assistant.")]
+    messages.extend(history.messages)
+    messages.append(HumanMessage(content=message))
+
+    history.add_user_message(message)
 
     callback = SlackStreamingCallbackHandler(channel=channel, ts=ts)
     llm = ChatOpenAI(
@@ -63,21 +82,15 @@ def handle_mention(event, say):
         callbacks=[callback],
     )
 
-    llm.predict(message)
+    ai_message = llm(messages)
+    history.add_message(ai_message)
 
-# @app.event("app_mention")
-# def handle_mention(event, say):
-#     thread_ts = event["ts"]
-#     message = re.sub("<@.*>", "", event["text"])
-#
-#     llm = ChatOpenAI(
-#         model_name=os.environ["OPENAI_API_MODEL"],
-#         temperature=os.environ["OPENAI_API_TEMPERATURE"],
-#     )
-#
-#     response = llm.predict(message)
-#     say(thread_ts=thread_ts, text=response)
 
+def just_ack(ack):
+    ack()
+
+
+app.event("app_mention")(ack=just_ack, lazy=[handle_mention])
 
 if __name__ == "__main__":
     SocketModeHandler(app, os.environ["SLACK_APP_TOKEN"]).start()
