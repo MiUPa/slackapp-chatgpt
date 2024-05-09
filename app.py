@@ -1,37 +1,39 @@
+import json
+import logging
 import os
+import re
+import time
+from datetime import timedelta
+from typing import Any
+
 from dotenv import load_dotenv
 from slack_bolt import App
 from slack_bolt.adapter.socket_mode import SocketModeHandler
 
-import re
-
 from langchain_openai import ChatOpenAI
-
-import time
-from typing import Any
 
 CHAT_UPDATE_INTERVAL_SEC = 1
 
 from langchain.callbacks.base import BaseCallbackHandler
 from langchain.schema import HumanMessage, LLMResult, SystemMessage
 
-from datetime import timedelta
 from langchain.memory import MomentoChatMessageHistory
 
-import json
-import logging
 from slack_bolt.adapter.aws_lambda import SlackRequestHandler
 
 from add_document import initialize_vectorstore
 from langchain.chains import RetrievalQA
+
+from langchain.chains import ConversationalRetrievalChain
+from langchain.memory import ConversationBufferMemory
+
+load_dotenv()
 
 SlackRequestHandler.clear_all_log_handlers()
 logging.basicConfig(
     format="%(asctime)s [%(levelname)s] %(message)s", level=logging.INFO
 )
 logger = logging.getLogger(__name__)
-
-load_dotenv()
 
 app = App(
     signing_secret=os.environ["SLACK_SIGNING_SECRET"],
@@ -54,7 +56,7 @@ class SlackStreamingCallbackHandler(BaseCallbackHandler):
         self.message += token
 
         now = time.time()
-        if now - self.last_send_time >self.interval:
+        if now - self.last_send_time > self.interval:
             app.client.chat_update(
                 channel=self.channel, ts=self.ts, text=f"{self.message}\n\nTyping..."
             )
@@ -95,19 +97,23 @@ def handle_mention(event, say):
     result = say("\n\nTyping...", thread_ts=thread_ts)
     ts = result["ts"]
 
-    vectorstore = initialize_vectorstore()
+    history = MomentoChatMessageHistory.from_client_params(
+        id_ts,
+        os.environ["MOMENTO_CACHE"],
+        timedelta(hours=int(os.environ["MOMENTO_TTL"])),
+    )
 
-    # history = MomentoChatMessageHistory.from_client_params(
-    #     id_ts,
-    #     os.environ["MOMENTO_CACHE"],
-    #     timedelta(hours=int(os.environ["MOMENTO_TTL"])),
-    # )
-    #
+    memory = ConversationBufferMemory(
+        chat_memory=history, memory_key="chat_history", return_message=True
+    )
+
     # messages = [SystemMessage(content="You are a good assistant.")]
     # messages.extend(history.messages)
     # messages.append(HumanMessage(content=message))
     #
     # history.add_user_message(message)
+
+    vectorstore = initialize_vectorstore()
 
     callback = SlackStreamingCallbackHandler(channel=channel, ts=ts)
     llm = ChatOpenAI(
@@ -117,10 +123,22 @@ def handle_mention(event, say):
         callbacks=[callback],
     )
 
+    condense_question_llm = ChatOpenAI(
+        model_name=os.environ["OPENAI_API_MODEL"],
+        temperature=os.environ["OPENAI_API_TEMPERATURE"],
+    )
+
+    qa_chain = ConversationalRetrievalChain.from_llm(
+        llm=llm,
+        retriever=vectorstore.as_retriever(),
+        memory=memory,
+        condense_question_llm=condense_question_llm,
+    )
+
     # ai_message = llm(messages)
     # history.add_message(ai_message)
 
-    qa_chain = RetrievalQA.from_llm(llm=llm, retriever=vectorstore.as_retriever())
+    # qa_chain = RetrievalQA.from_llm(llm=llm, retriever=vectorstore.as_retriever())
 
     qa_chain.run(message)
 
