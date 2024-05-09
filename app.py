@@ -22,6 +22,9 @@ import json
 import logging
 from slack_bolt.adapter.aws_lambda import SlackRequestHandler
 
+from add_document import initialize_vectorstore
+from langchain.chains import RetrievalQA
+
 SlackRequestHandler.clear_all_log_handlers()
 logging.basicConfig(
     format="%(asctime)s [%(levelname)s] %(message)s", level=logging.INFO
@@ -92,17 +95,19 @@ def handle_mention(event, say):
     result = say("\n\nTyping...", thread_ts=thread_ts)
     ts = result["ts"]
 
-    history = MomentoChatMessageHistory.from_client_params(
-        id_ts,
-        os.environ["MOMENTO_CACHE"],
-        timedelta(hours=int(os.environ["MOMENTO_TTL"])),
-    )
+    vectorstore = initialize_vectorstore()
 
-    messages = [SystemMessage(content="You are a good assistant.")]
-    messages.extend(history.messages)
-    messages.append(HumanMessage(content=message))
-
-    history.add_user_message(message)
+    # history = MomentoChatMessageHistory.from_client_params(
+    #     id_ts,
+    #     os.environ["MOMENTO_CACHE"],
+    #     timedelta(hours=int(os.environ["MOMENTO_TTL"])),
+    # )
+    #
+    # messages = [SystemMessage(content="You are a good assistant.")]
+    # messages.extend(history.messages)
+    # messages.append(HumanMessage(content=message))
+    #
+    # history.add_user_message(message)
 
     callback = SlackStreamingCallbackHandler(channel=channel, ts=ts)
     llm = ChatOpenAI(
@@ -112,8 +117,12 @@ def handle_mention(event, say):
         callbacks=[callback],
     )
 
-    ai_message = llm(messages)
-    history.add_message(ai_message)
+    # ai_message = llm(messages)
+    # history.add_message(ai_message)
+
+    qa_chain = RetrievalQA.from_llm(llm=llm, retriever=vectorstore.as_retriever())
+
+    qa_chain.run(message)
 
 
 def just_ack(ack):
